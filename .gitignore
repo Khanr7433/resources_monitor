@@ -1,0 +1,21 @@
+# Python (no longer used)
+__pycache__/
+*.py[cod]
+venv/
+
+# C Build
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
