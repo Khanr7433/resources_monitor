@@ -3,11 +3,13 @@
 #define UNICODE
 #define _UNICODE
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <iphlpapi.h>
+#include <netioapi.h>
 #include <objbase.h>
 #include <oleauto.h>
 #include "metrics.h"

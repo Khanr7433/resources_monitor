@@ -1,9 +1,7 @@
-# Python (no longer used)
-__pycache__/
-*.py[cod]
-venv/
-
-# C Build
+# C/C++ build artifacts
+build/
+cmake-build-*/
+out/
 *.o
 *.obj
 *.exe
@@ -11,6 +9,16 @@ venv/
 *.ilk
 *.exp
 *.lib
+*.dll
+*.so
+*.a
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+Makefile
 
 # IDE
 .vscode/
