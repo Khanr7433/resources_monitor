@@ -62,7 +62,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         InvalidateRect(h, NULL, TRUE);
         return 0;
     }
-    if (msg == WM_RBUTTONUP)
+    if (msg == WM_CONTEXTMENU || msg == WM_RBUTTONUP)
     {
         HMENU m = CreatePopupMenu();
         AppendMenuW(m, MF_STRING, 1, L"Task Manager");
@@ -71,7 +71,8 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         POINT pt;
         GetCursorPos(&pt);
         SetForegroundWindow(h);
-        int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, h, NULL);
+        int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, NULL);
+        PostMessage(h, WM_NULL, 0, 0);
         if (cmd == 1)
         {
             ShellExecuteW(NULL, L"open", L"taskmgr.exe", NULL, NULL, SW_SHOW);

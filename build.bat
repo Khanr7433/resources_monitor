@@ -37,4 +37,3 @@ echo [ERROR] No C compiler found. Install GCC (MinGW-w64) or MSVC.
 
 :done
 echo.
-pause
