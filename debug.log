@@ -1,0 +1,18 @@
+Starting WinMain
+Calling InitCommonControlsEx
+Calling init_gui
+Calling init_metrics
+Calling create_widget
+create_widget succeeded
+it_metrics WMI CoInitializeEx
+  init_metrics WMI CoInitializeSecurity
+  init_metrics WMI CoCreateInstance
+  init_metrics WMI SysAllocString
+  init_metrics WMI WMI_Connect
+  init_metrics WMI SysFreeString
+  init_metrics WMI COM_Release
+  init_metrics nvml
+  init_metrics upd_cpu
+  init_metrics upd_net
+  init_metrics update_metrics
+  init_metrics end

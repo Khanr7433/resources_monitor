@@ -24,13 +24,13 @@ static const GUID IID_IWbemLocator = {0xdc12a687, 0x737f, 0x11cf, {0x88, 0x4d, 0
 
 #define VT(obj) (*(void ***)(obj))
 typedef ULONG(STDMETHODCALLTYPE *pfn_Release)(void *);
-typedef HRESULT(STDMETHODCALLTYPE *pfn_ConnectServer)(void *, BSTR, BSTR, BSTR, LONG, LONG, BSTR, void *, void **);
+typedef HRESULT(STDMETHODCALLTYPE *pfn_ConnectServer)(void *, BSTR, BSTR, BSTR, BSTR, LONG, BSTR, void *, void **);
 typedef HRESULT(STDMETHODCALLTYPE *pfn_ExecQuery)(void *, BSTR, BSTR, LONG, void *, void **);
 typedef HRESULT(STDMETHODCALLTYPE *pfn_EnumNext)(void *, LONG, ULONG, void **, ULONG *);
 typedef HRESULT(STDMETHODCALLTYPE *pfn_ObjGet)(void *, LPCWSTR, LONG, VARIANT *, LONG *, LONG *);
 
 #define COM_Release(obj) ((pfn_Release)(VT(obj)[2]))(obj)
-#define WMI_Connect(loc, ns, svc) ((pfn_ConnectServer)(VT(loc)[3]))(loc, ns, NULL, NULL, 0, 0, NULL, NULL, svc)
+#define WMI_Connect(loc, ns, svc) ((pfn_ConnectServer)(VT(loc)[3]))(loc, ns, NULL, NULL, NULL, 0, NULL, NULL, svc)
 #define WMI_Query(svc, lang, qry, enm) ((pfn_ExecQuery)(VT(svc)[20]))(svc, lang, qry, 0x20, NULL, enm)
 #define WMI_Next(enm, obj, cnt) ((pfn_EnumNext)(VT(enm)[4]))(enm, 3000, 1, obj, cnt)
 #define WMI_Get(obj, name, val) ((pfn_ObjGet)(VT(obj)[4]))(obj, name, 0, val, NULL, NULL)

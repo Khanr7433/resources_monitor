@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <commctrl.h>
+#include <stdio.h>
 #include "common.h"
 #include "config.h"
 #include "metrics.h"
@@ -108,7 +109,10 @@ static HWND create_widget(HINSTANCE inst)
     HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
                                 CLASS_NAME, NULL, WS_POPUP, 0, 0, 10, 10, NULL, NULL, inst, NULL);
     if (!hwnd)
+    {
+        printf("CreateWindowExW failed, error: %lu\n", GetLastError());
         return NULL;
+    }
     SetLayeredWindowAttributes(hwnd, 0, 230, LWA_ALPHA);
 
     load_config();
@@ -123,11 +127,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     icex.dwSize = sizeof(icex);
     icex.dwICC = ICC_LISTVIEW_CLASSES;
     InitCommonControlsEx(&icex);
+
     init_gui();
     init_metrics();
 
     if (!(g_hwnd = create_widget(inst)))
+    {
         return 1;
+    }
+
     SetTimer(g_hwnd, TIMER_ID, UPDATE_MS, NULL);
     InvalidateRect(g_hwnd, NULL, FALSE);
 
