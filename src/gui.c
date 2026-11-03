@@ -18,6 +18,9 @@ int g_pad_y = PAD_Y;
 int g_col_gap = COL_GAP;
 int g_row_gap = ROW_GAP;
 
+COLORREF g_clr_label = CLR_DARK_LABEL;
+COLORREF g_clr_value = CLR_DARK_VALUE;
+
 static HWND g_hSettings = NULL;
 static HDC s_mem_dc = NULL;
 static HBITMAP s_mem_bmp = NULL;
@@ -49,14 +52,14 @@ void update_dpi_scale(HWND hwnd)
 
         if (g_font)
             DeleteObject(g_font);
-        g_font = CreateFontW(-g_font_h, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        g_font = CreateFontW(-g_font_h, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                              CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
     }
 }
 
 /* ================================================================
- *  Formatting & Colors
+ *  Formatting & Strings
  * ================================================================ */
 static void fmt_bytes(double b, wchar_t *buf, int n)
 {
@@ -64,193 +67,255 @@ static void fmt_bytes(double b, wchar_t *buf, int n)
         swprintf(buf, n, L"%.2f GB", b / 1073741824.0);
     else if (b >= 1048576.0)
         swprintf(buf, n, L"%.2f MB", b / 1048576.0);
-    else if (b >= 1024.0)
-        swprintf(buf, n, L"%.2f KB", b / 1024.0);
     else
-        swprintf(buf, n, L"%.0f B", b);
+        swprintf(buf, n, L"%.2f KB", b / 1024.0);
 }
 
 static void fmt_speed(double bps, wchar_t *buf, int n)
 {
-    if (bps >= 1048576.0)
+    if (bps >= 1073741824.0)
+        swprintf(buf, n, L"%.2f GB/s", bps / 1073741824.0);
+    else if (bps >= 1048576.0)
         swprintf(buf, n, L"%.2f MB/s", bps / 1048576.0);
-    else if (bps >= 1024.0)
-        swprintf(buf, n, L"%.2f KB/s", bps / 1024.0);
     else
-        swprintf(buf, n, L"%.0f B/s", bps);
+        swprintf(buf, n, L"%.2f KB/s", bps / 1024.0);
 }
 
-static COLORREF pct_color(double pct) { return pct >= 90.0 ? CLR_CRIT : pct >= 70.0 ? CLR_WARN
-                                                                                    : CLR_GOOD; }
-static COLORREF temp_color(double temp) { return temp >= 85.0 ? CLR_CRIT : temp >= 70.0 ? CLR_WARN
-                                                                                        : CLR_GOOD; }
-
-/* ================================================================
- *  Drawing Routines
- * ================================================================ */
-static int worst_case_width(HDC hdc, int id)
+static void get_metric_strings(int id, int is_bottom, wchar_t *lbl, int lbl_sz, wchar_t *val, int val_sz, wchar_t *worst, int worst_sz)
 {
-    const wchar_t *s = L"";
+    lbl[0] = 0;
+    val[0] = 0;
+    worst[0] = 0;
+
     switch (id)
     {
     case M_NET_DL:
-        s = L"\u25BC 999.99 MB/s";
+        wcsncpy(lbl, L"\u2193: ", lbl_sz);
+        fmt_speed(g_metrics.net_dl_speed, val, val_sz);
+        wcsncpy(worst, L"999.99 MB/s", worst_sz);
         break;
     case M_NET_UL:
-        s = L"\u25B2 999.99 MB/s";
+        wcsncpy(lbl, L"\u2191: ", lbl_sz);
+        fmt_speed(g_metrics.net_ul_speed, val, val_sz);
+        wcsncpy(worst, L"999.99 MB/s", worst_sz);
         break;
     case M_NET_ALL:
-        s = L"\u2195 999.99 MB/s";
+        wcsncpy(lbl, L"\u2191\u2193: ", lbl_sz);
+        fmt_speed(g_metrics.net_speed, val, val_sz);
+        wcsncpy(worst, L"999.99 MB/s", worst_sz);
         break;
     case M_NET_TOT:
-        s = L"\u2211 9999.99 GB";
+        if (!is_bottom)
+        {
+            wcsncpy(lbl, L"Total traffic:", lbl_sz);
+            val[0] = 0;
+            worst[0] = 0;
+        }
+        else
+        {
+            lbl[0] = 0;
+            fmt_bytes(g_metrics.total_traffic, val, val_sz);
+            wcsncpy(worst, L"999.99 GB", worst_sz);
+        }
         break;
     case M_CPU_TEMP:
-        s = L"CPU: 100 \u00B0C";
+        wcsncpy(lbl, L"CPU: ", lbl_sz);
+        if (g_metrics.cpu_temp >= 0)
+            swprintf(val, val_sz, L"%.0f \u00B0C", g_metrics.cpu_temp);
+        else
+            wcsncpy(val, L"-- \u00B0C", val_sz);
+        wcsncpy(worst, L"100 \u00B0C", worst_sz);
         break;
     case M_CPU_USAGE:
-        s = L"CPU: 100 %";
+        wcsncpy(lbl, L"CPU: ", lbl_sz);
+        swprintf(val, val_sz, L"%.0f %%", g_metrics.cpu_pct);
+        wcsncpy(worst, L"100 %", worst_sz);
         break;
     case M_CPU_FREQ:
-        s = L"CPU: 9.99 GHz";
+        wcsncpy(lbl, L"CPU: ", lbl_sz);
+        swprintf(val, val_sz, L"%.2f GHz", g_metrics.cpu_ghz);
+        wcsncpy(worst, L"9.99 GHz", worst_sz);
         break;
     case M_RAM_USAGE:
-        s = L"RAM: 128.00 GB (100 %)";
+        wcsncpy(lbl, L"MEM: ", lbl_sz);
+        swprintf(val, val_sz, L"%.0f %%", g_metrics.mem_pct);
+        wcsncpy(worst, L"100 %", worst_sz);
         break;
     case M_GPU_TEMP:
-        s = L"GPU: 100 \u00B0C";
+        wcsncpy(lbl, L"GPU: ", lbl_sz);
+        if (g_metrics.gpu_temp >= 0)
+            swprintf(val, val_sz, L"%.0f \u00B0C", g_metrics.gpu_temp);
+        else
+            wcsncpy(val, L"-- \u00B0C", val_sz);
+        wcsncpy(worst, L"100 \u00B0C", worst_sz);
         break;
     case M_GPU_USAGE:
-        s = L"GPU: 100 %";
+        wcsncpy(lbl, L"GPU: ", lbl_sz);
+        if (g_metrics.gpu_pct >= 0)
+            swprintf(val, val_sz, L"%.0f %%", g_metrics.gpu_pct);
+        else
+            wcsncpy(val, L"0 %", val_sz);
+        wcsncpy(worst, L"100 %", worst_sz);
         break;
     case M_GPU_VRAM:
-        s = L"VRAM: 24.0 GB";
+        wcsncpy(lbl, L"VRAM: ", lbl_sz);
+        if (g_metrics.gpu_vram_used >= 0)
+            swprintf(val, val_sz, L"%.1f GB", g_metrics.gpu_vram_used / 1073741824.0);
+        else
+            wcsncpy(val, L"-- GB", val_sz);
+        wcsncpy(worst, L"99.9 GB", worst_sz);
         break;
     case M_DISK_USAGE:
-        s = L"DSK: 100 %";
+        wcsncpy(lbl, L"DSK: ", lbl_sz);
+        if (g_metrics.disk_pct >= 0)
+            swprintf(val, val_sz, L"%.0f %%", g_metrics.disk_pct);
+        else
+            wcsncpy(val, L"-- %", val_sz);
+        wcsncpy(worst, L"100 %", worst_sz);
         break;
     }
-    SIZE sz;
-    GetTextExtentPoint32W(hdc, s, (int)wcslen(s), &sz);
-    return sz.cx + g_col_gap;
+}
+
+/* ================================================================
+ *  Layout & Measurement
+ * ================================================================ */
+typedef struct
+{
+    int top_id;
+    int bottom_id;
+    BOOL is_tot_traffic;
+    int width;
+} WidgetCol;
+
+static int measure_item_width(HDC hdc, int id, int is_bottom)
+{
+    wchar_t lbl[32], val[32], worst[32];
+    get_metric_strings(id, is_bottom, lbl, 32, val, 32, worst, 32);
+
+    SIZE sz_lbl = {0}, sz_val = {0}, sz_worst = {0};
+    if (lbl[0])
+        GetTextExtentPoint32W(hdc, lbl, (int)wcslen(lbl), &sz_lbl);
+    if (val[0])
+        GetTextExtentPoint32W(hdc, val, (int)wcslen(val), &sz_val);
+    if (worst[0])
+        GetTextExtentPoint32W(hdc, worst, (int)wcslen(worst), &sz_worst);
+
+    int val_w = (sz_val.cx > sz_worst.cx) ? sz_val.cx : sz_worst.cx;
+    return sz_lbl.cx + val_w;
+}
+
+static int build_columns(HDC hdc, WidgetCol *cols, int max_cols)
+{
+    int col_cnt = 0;
+    BOOL has_top = FALSE;
+
+    for (int i = 0; i < cfg_count; i++)
+    {
+        if (!cfg_items[i].active)
+            continue;
+
+        int id = cfg_items[i].id;
+        if (id == M_NET_TOT)
+        {
+            if (has_top)
+            {
+                cols[col_cnt].bottom_id = -1;
+                cols[col_cnt].is_tot_traffic = FALSE;
+                col_cnt++;
+                has_top = FALSE;
+                if (col_cnt >= max_cols)
+                    break;
+            }
+            cols[col_cnt].top_id = M_NET_TOT;
+            cols[col_cnt].bottom_id = M_NET_TOT;
+            cols[col_cnt].is_tot_traffic = TRUE;
+            col_cnt++;
+            if (col_cnt >= max_cols)
+                break;
+            continue;
+        }
+
+        if (!has_top)
+        {
+            if (col_cnt >= max_cols)
+                break;
+            cols[col_cnt].top_id = id;
+            cols[col_cnt].bottom_id = -1;
+            cols[col_cnt].is_tot_traffic = FALSE;
+            has_top = TRUE;
+        }
+        else
+        {
+            cols[col_cnt].bottom_id = id;
+            col_cnt++;
+            has_top = FALSE;
+            if (col_cnt >= max_cols)
+                break;
+        }
+    }
+
+    if (has_top && col_cnt < max_cols)
+    {
+        cols[col_cnt].bottom_id = -1;
+        cols[col_cnt].is_tot_traffic = FALSE;
+        col_cnt++;
+    }
+
+    for (int c = 0; c < col_cnt; c++)
+    {
+        int w_top = 0, w_bot = 0;
+        if (cols[c].is_tot_traffic)
+        {
+            w_top = measure_item_width(hdc, M_NET_TOT, 0);
+            w_bot = measure_item_width(hdc, M_NET_TOT, 1);
+        }
+        else
+        {
+            if (cols[c].top_id >= 0)
+                w_top = measure_item_width(hdc, cols[c].top_id, 0);
+            if (cols[c].bottom_id >= 0)
+                w_bot = measure_item_width(hdc, cols[c].bottom_id, 1);
+        }
+        cols[c].width = (w_top > w_bot) ? w_top : w_bot;
+    }
+
+    return col_cnt;
 }
 
 int get_widget_width(HDC dc)
 {
-    int active_idx[32];
-    int a_cnt = 0;
-    for (int i = 0; i < cfg_count; i++)
+    WidgetCol cols[16];
+    int col_cnt = build_columns(dc, cols, 16);
+    if (col_cnt == 0)
+        return g_pad_x * 2;
+
+    int total_w = g_pad_x;
+    for (int i = 0; i < col_cnt; i++)
     {
-        if (cfg_items[i].active)
-            active_idx[a_cnt++] = cfg_items[i].id;
+        total_w += cols[i].width;
+        if (i < col_cnt - 1)
+            total_w += g_col_gap;
     }
-    int half = (a_cnt + 1) / 2;
-    int w1 = g_pad_x, w2 = g_pad_x;
-    for (int i = 0; i < half; i++)
-        w1 += worst_case_width(dc, active_idx[i]);
-    for (int i = half; i < a_cnt; i++)
-        w2 += worst_case_width(dc, active_idx[i]);
-    return (w1 > w2 ? w1 : w2) + g_pad_x;
+    total_w += g_pad_x;
+    return total_w;
 }
 
-static int draw_single(HDC hdc, int x, int y, const wchar_t *text, COLORREF vc, int gap)
+static void draw_item(HDC hdc, int x, int y, int id, int is_bottom)
 {
-    SIZE sz;
-    SetTextColor(hdc, vc);
-    TextOutW(hdc, x, y, text, (int)wcslen(text));
-    GetTextExtentPoint32W(hdc, text, (int)wcslen(text), &sz);
-    return x + sz.cx + gap;
-}
-static int draw_pair(HDC hdc, int x, int y, const wchar_t *label, const wchar_t *value, COLORREF vc)
-{
-    SIZE sz;
-    SetTextColor(hdc, CLR_LABEL);
-    TextOutW(hdc, x, y, label, (int)wcslen(label));
-    GetTextExtentPoint32W(hdc, label, (int)wcslen(label), &sz);
-    x += sz.cx;
-    SetTextColor(hdc, vc);
-    TextOutW(hdc, x, y, value, (int)wcslen(value));
-    GetTextExtentPoint32W(hdc, value, (int)wcslen(value), &sz);
-    return x + sz.cx + g_col_gap;
-}
+    wchar_t lbl[32], val[32], worst[32];
+    get_metric_strings(id, is_bottom, lbl, 32, val, 32, worst, 32);
 
-static void draw_metric(HDC mem, int *x, int y, int id)
-{
-    wchar_t buf[64], final[80];
-    switch (id)
+    SIZE sz_lbl = {0};
+    if (lbl[0])
     {
-    case M_NET_DL:
-        fmt_speed(g_metrics.net_dl_speed, buf, 64);
-        swprintf(final, 80, L"\u25BC %s", buf);
-        *x = draw_single(mem, *x, y, final, CLR_NORMAL, g_col_gap);
-        break;
-    case M_NET_UL:
-        fmt_speed(g_metrics.net_ul_speed, buf, 64);
-        swprintf(final, 80, L"\u25B2 %s", buf);
-        *x = draw_single(mem, *x, y, final, CLR_NORMAL, g_col_gap);
-        break;
-    case M_NET_ALL:
-        fmt_speed(g_metrics.net_speed, buf, 64);
-        swprintf(final, 80, L"\u2195 %s", buf);
-        *x = draw_single(mem, *x, y, final, CLR_NORMAL, g_col_gap);
-        break;
-    case M_NET_TOT:
-        fmt_bytes(g_metrics.total_traffic, buf, 64);
-        swprintf(final, 80, L"\u2211 %s", buf);
-        *x = draw_single(mem, *x, y, final, CLR_NORMAL, g_col_gap);
-        break;
-    case M_CPU_TEMP:
-        if (g_metrics.cpu_temp >= 0)
-            swprintf(buf, 64, L"%.0f \u00B0C", g_metrics.cpu_temp);
-        else
-            wcscpy(buf, L"N/A");
-        *x = draw_pair(mem, *x, y, L"CPU: ", buf, temp_color(g_metrics.cpu_temp));
-        break;
-    case M_CPU_USAGE:
-        swprintf(buf, 64, L"%.0f %%", g_metrics.cpu_pct);
-        *x = draw_pair(mem, *x, y, L"CPU: ", buf, pct_color(g_metrics.cpu_pct));
-        break;
-    case M_CPU_FREQ:
-        swprintf(buf, 64, L"%.2f GHz", g_metrics.cpu_ghz);
-        *x = draw_pair(mem, *x, y, L"CPU: ", buf, CLR_NORMAL);
-        break;
-    case M_RAM_USAGE:
-        swprintf(buf, 64, L"%.1f GB (%.0f %%)", g_metrics.mem_used / 1073741824.0, g_metrics.mem_pct);
-        *x = draw_pair(mem, *x, y, L"RAM: ", buf, pct_color(g_metrics.mem_pct));
-        break;
-    case M_GPU_TEMP:
-        if (g_metrics.gpu_temp >= 0)
-            swprintf(buf, 64, L"%.0f \u00B0C", g_metrics.gpu_temp);
-        else
-            wcscpy(buf, L"N/A");
-        *x = draw_pair(mem, *x, y, L"GPU: ", buf, temp_color(g_metrics.gpu_temp));
-        break;
-    case M_GPU_USAGE:
-        if (g_metrics.gpu_pct >= 0)
-            swprintf(buf, 64, L"%.0f %%", g_metrics.gpu_pct);
-        else
-            wcscpy(buf, L"N/A");
-        *x = draw_pair(mem, *x, y, L"GPU: ", buf, g_metrics.gpu_pct >= 0 ? pct_color(g_metrics.gpu_pct) : CLR_LABEL);
-        break;
-    case M_GPU_VRAM:
-        if (g_metrics.gpu_vram_used >= 0)
-        {
-            double pct = (g_metrics.gpu_vram_used / (g_metrics.gpu_vram_total > 0 ? g_metrics.gpu_vram_total : 1)) * 100.0;
-            swprintf(buf, 64, L"%.1f GB", g_metrics.gpu_vram_used / 1073741824.0);
-            *x = draw_pair(mem, *x, y, L"VRAM: ", buf, pct_color(pct));
-        }
-        else
-        {
-            *x = draw_pair(mem, *x, y, L"VRAM: ", L"N/A", CLR_LABEL);
-        }
-        break;
-    case M_DISK_USAGE:
-        if (g_metrics.disk_pct >= 0)
-            swprintf(buf, 64, L"%.0f %%", g_metrics.disk_pct);
-        else
-            wcscpy(buf, L"N/A");
-        *x = draw_pair(mem, *x, y, L"DSK: ", buf, pct_color(g_metrics.disk_pct));
-        break;
+        SetTextColor(hdc, g_clr_label);
+        TextOutW(hdc, x, y, lbl, (int)wcslen(lbl));
+        GetTextExtentPoint32W(hdc, lbl, (int)wcslen(lbl), &sz_lbl);
+    }
+    if (val[0])
+    {
+        SetTextColor(hdc, g_clr_value);
+        TextOutW(hdc, x + sz_lbl.cx, y, val, (int)wcslen(val));
     }
 }
 
@@ -282,29 +347,36 @@ void paint_widget(HWND hwnd)
         s_old_bmp = (HBITMAP)SelectObject(s_mem_dc, s_mem_bmp);
     }
 
-    HBRUSH bg = CreateSolidBrush(BG_COLOR);
+    HBRUSH bg = CreateSolidBrush(KEY_COLOR);
     FillRect(s_mem_dc, &rc, bg);
     DeleteObject(bg);
+
     SelectObject(s_mem_dc, g_font);
     SetBkMode(s_mem_dc, TRANSPARENT);
 
-    int active_idx[32];
-    int a_cnt = 0;
-    for (int i = 0; i < cfg_count; i++)
+    WidgetCol cols[16];
+    int col_cnt = build_columns(s_mem_dc, cols, 16);
+
+    int cur_x = g_pad_x;
+    int y_top = g_pad_y;
+    int y_bot = g_pad_y + g_font_h + g_row_gap;
+
+    for (int i = 0; i < col_cnt; i++)
     {
-        if (cfg_items[i].active)
-            active_idx[a_cnt++] = cfg_items[i].id;
+        if (cols[i].is_tot_traffic)
+        {
+            draw_item(s_mem_dc, cur_x, y_top, M_NET_TOT, 0);
+            draw_item(s_mem_dc, cur_x, y_bot, M_NET_TOT, 1);
+        }
+        else
+        {
+            if (cols[i].top_id >= 0)
+                draw_item(s_mem_dc, cur_x, y_top, cols[i].top_id, 0);
+            if (cols[i].bottom_id >= 0)
+                draw_item(s_mem_dc, cur_x, y_bot, cols[i].bottom_id, 1);
+        }
+        cur_x += cols[i].width + g_col_gap;
     }
-    int half = (a_cnt + 1) / 2;
-
-    int x = g_pad_x, y = g_pad_y;
-    for (int i = 0; i < half; i++)
-        draw_metric(s_mem_dc, &x, y, active_idx[i]);
-
-    x = g_pad_x;
-    y = g_pad_y + g_font_h + g_row_gap;
-    for (int i = half; i < a_cnt; i++)
-        draw_metric(s_mem_dc, &x, y, active_idx[i]);
 
     BitBlt(hdc, 0, 0, rc.right, rc.bottom, s_mem_dc, 0, 0, SRCCOPY);
     EndPaint(hwnd, &ps);
