@@ -27,3 +27,5 @@ Makefile
 # OS
 Thumbs.db
 Desktop.ini
+.agents
+openspec/

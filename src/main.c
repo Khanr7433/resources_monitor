@@ -28,15 +28,25 @@ static void resize_and_position(HWND hwnd)
     HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
     if (taskbar)
     {
+        SetParent(hwnd, taskbar);
         RECT trc, nrc;
-        GetWindowRect(taskbar, &trc);
+        GetClientRect(taskbar, &trc);
         HWND tray = FindWindowExW(taskbar, NULL, L"TrayNotifyWnd", NULL);
-        int y = trc.top + ((trc.bottom - trc.top) - h) / 2;
-        int x = tray && GetWindowRect(tray, &nrc) ? nrc.left - w - 4 : trc.right - w - 200;
-        SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
+        int y = (trc.bottom - h) / 2;
+        int x = trc.right - w - 200;
+
+        if (tray && GetWindowRect(tray, &nrc))
+        {
+            POINT pt = {nrc.left, nrc.top};
+            ScreenToClient(taskbar, &pt);
+            x = pt.x - w - 4;
+        }
+
+        SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
     }
     else
     {
+        SetParent(hwnd, NULL);
         SetWindowPos(hwnd, HWND_TOPMOST, GetSystemMetrics(SM_CXSCREEN) - w - 200, GetSystemMetrics(SM_CYSCREEN) - h, w, h, SWP_NOACTIVATE);
     }
 }
