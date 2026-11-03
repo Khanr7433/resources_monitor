@@ -13,40 +13,113 @@
 
 static HWND g_hwnd;
 
+typedef struct {
+    HWND self;
+    HWND taskbar;
+    RECT trc;
+    int tray_left;
+    int leftmost_neighbor_x;
+} NeighborScanData;
+
+static BOOL CALLBACK scan_neighbor_proc(HWND wnd, LPARAM lp)
+{
+    NeighborScanData *data = (NeighborScanData *)lp;
+    if (wnd == data->self || wnd == data->taskbar)
+        return TRUE;
+    if (!IsWindowVisible(wnd))
+        return TRUE;
+
+    RECT rc;
+    if (!GetWindowRect(wnd, &rc))
+        return TRUE;
+
+    if (rc.right <= rc.left || rc.bottom <= rc.top)
+        return TRUE;
+
+    int mid_y = (rc.top + rc.bottom) / 2;
+    if (mid_y < data->trc.top || mid_y > data->trc.bottom)
+        return TRUE;
+
+    if (rc.right > (data->leftmost_neighbor_x - 10) && rc.left < data->leftmost_neighbor_x && rc.right <= (data->tray_left + 10))
+    {
+        int w = rc.right - rc.left;
+        if (w >= 10 && w <= 450)
+        {
+            if (rc.left < data->leftmost_neighbor_x)
+            {
+                data->leftmost_neighbor_x = rc.left;
+            }
+        }
+    }
+    return TRUE;
+}
+
+static BOOL is_fullscreen_app_active(HWND self)
+{
+    HWND fg = GetForegroundWindow();
+    if (!fg || fg == GetDesktopWindow() || fg == self)
+        return FALSE;
+
+    HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+    if (fg == taskbar)
+        return FALSE;
+
+    RECT rc;
+    if (GetWindowRect(fg, &rc))
+    {
+        int sw = GetSystemMetrics(SM_CXSCREEN);
+        int sh = GetSystemMetrics(SM_CYSCREEN);
+        if (rc.left <= 0 && rc.top <= 0 && rc.right >= sw && rc.bottom >= sh)
+        {
+            LONG style = GetWindowLongW(fg, GWL_STYLE);
+            if ((style & WS_VISIBLE) && !(style & WS_CHILD))
+                return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 static void resize_and_position(HWND hwnd)
 {
+    update_dpi_scale(hwnd);
     HDC dc = GetDC(hwnd);
     HFONT old = (HFONT)SelectObject(dc, g_font);
     int w = get_widget_width(dc);
     SelectObject(dc, old);
     ReleaseDC(hwnd, dc);
 
-    int h = FONT_H * 2 + ROW_GAP + PAD_Y * 2;
+    int h = g_font_h * 2 + g_row_gap + g_pad_y * 2;
     if (w < 10)
         w = 10;
 
     HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
     if (taskbar)
     {
-        SetParent(hwnd, taskbar);
         RECT trc, nrc;
-        GetClientRect(taskbar, &trc);
+        GetWindowRect(taskbar, &trc);
         HWND tray = FindWindowExW(taskbar, NULL, L"TrayNotifyWnd", NULL);
-        int y = (trc.bottom - h) / 2;
-        int x = trc.right - w - 200;
+        int y = trc.top + ((trc.bottom - trc.top) - h) / 2;
+        int target_x = trc.right - w - 200;
 
         if (tray && GetWindowRect(tray, &nrc))
         {
-            POINT pt = {nrc.left, nrc.top};
-            ScreenToClient(taskbar, &pt);
-            x = pt.x - w - 4;
+            NeighborScanData data;
+            data.self = hwnd;
+            data.taskbar = taskbar;
+            data.trc = trc;
+            data.tray_left = nrc.left;
+            data.leftmost_neighbor_x = nrc.left;
+
+            EnumChildWindows(taskbar, scan_neighbor_proc, (LPARAM)&data);
+            EnumWindows(scan_neighbor_proc, (LPARAM)&data);
+
+            target_x = data.leftmost_neighbor_x - w - 4;
         }
 
-        SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
+        SetWindowPos(hwnd, HWND_TOPMOST, target_x, y, w, h, SWP_NOACTIVATE);
     }
     else
     {
-        SetParent(hwnd, NULL);
         SetWindowPos(hwnd, HWND_TOPMOST, GetSystemMetrics(SM_CXSCREEN) - w - 200, GetSystemMetrics(SM_CYSCREEN) - h, w, h, SWP_NOACTIVATE);
     }
 }
@@ -60,8 +133,27 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     if (msg == WM_ERASEBKGND)
         return 1;
+    if (msg == WM_DPICHANGED)
+    {
+        update_dpi_scale(h);
+        resize_and_position(h);
+        InvalidateRect(h, NULL, TRUE);
+        return 0;
+    }
     if (msg == WM_TIMER && wp == TIMER_ID)
     {
+        if (is_fullscreen_app_active(h))
+        {
+            if (IsWindowVisible(h))
+                ShowWindow(h, SW_HIDE);
+            return 0;
+        }
+        else
+        {
+            if (!IsWindowVisible(h))
+                ShowWindow(h, SW_SHOWNOACTIVATE);
+        }
+        resize_and_position(h);
         update_metrics();
         InvalidateRect(h, NULL, FALSE);
         return 0;
@@ -70,6 +162,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     {
         resize_and_position(h);
         InvalidateRect(h, NULL, TRUE);
+        SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
         return 0;
     }
     if (msg == WM_CONTEXTMENU || msg == WM_RBUTTONUP)
@@ -134,6 +227,15 @@ static HWND create_widget(HINSTANCE inst)
 
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
+    typedef BOOL(WINAPI *pfn_SetProcessDpiAwarenessContext)(HANDLE);
+    HMODULE u32 = GetModuleHandleW(L"user32.dll");
+    if (u32)
+    {
+        pfn_SetProcessDpiAwarenessContext set_dpi = (pfn_SetProcessDpiAwarenessContext)GetProcAddress(u32, "SetProcessDpiAwarenessContext");
+        if (set_dpi)
+            set_dpi((HANDLE)-4); /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */
+    }
+
     INITCOMMONCONTROLSEX icex;
     icex.dwSize = sizeof(icex);
     icex.dwICC = ICC_LISTVIEW_CLASSES;
@@ -149,6 +251,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     SetTimer(g_hwnd, TIMER_ID, UPDATE_MS, NULL);
     InvalidateRect(g_hwnd, NULL, FALSE);
+    SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0))

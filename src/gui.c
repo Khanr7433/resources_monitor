@@ -11,7 +11,49 @@
 #include "gui.h"
 
 HFONT g_font = NULL;
+int g_dpi = 96;
+int g_font_h = FONT_H;
+int g_pad_x = PAD_X;
+int g_pad_y = PAD_Y;
+int g_col_gap = COL_GAP;
+int g_row_gap = ROW_GAP;
+
 static HWND g_hSettings = NULL;
+static HDC s_mem_dc = NULL;
+static HBITMAP s_mem_bmp = NULL;
+static HBITMAP s_old_bmp = NULL;
+static int s_bmp_w = 0, s_bmp_h = 0;
+
+void update_dpi_scale(HWND hwnd)
+{
+    typedef UINT(WINAPI *pfn_GetDpiForWindow)(HWND);
+    HMODULE u32 = GetModuleHandleW(L"user32.dll");
+    int dpi = 96;
+    if (u32)
+    {
+        pfn_GetDpiForWindow get_dpi = (pfn_GetDpiForWindow)GetProcAddress(u32, "GetDpiForWindow");
+        if (get_dpi && hwnd)
+            dpi = get_dpi(hwnd);
+    }
+    if (dpi <= 0)
+        dpi = 96;
+    if (dpi != g_dpi || !g_font)
+    {
+        g_dpi = dpi;
+        double scale = (double)dpi / 96.0;
+        g_font_h = (int)(FONT_H * scale);
+        g_pad_x = (int)(PAD_X * scale);
+        g_pad_y = (int)(PAD_Y * scale);
+        g_col_gap = (int)(COL_GAP * scale);
+        g_row_gap = (int)(ROW_GAP * scale);
+
+        if (g_font)
+            DeleteObject(g_font);
+        g_font = CreateFontW(-g_font_h, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    }
+}
 
 /* ================================================================
  *  Formatting & Colors
@@ -90,7 +132,7 @@ static int worst_case_width(HDC hdc, int id)
     }
     SIZE sz;
     GetTextExtentPoint32W(hdc, s, (int)wcslen(s), &sz);
-    return sz.cx + COL_GAP;
+    return sz.cx + g_col_gap;
 }
 
 int get_widget_width(HDC dc)
@@ -103,12 +145,12 @@ int get_widget_width(HDC dc)
             active_idx[a_cnt++] = cfg_items[i].id;
     }
     int half = (a_cnt + 1) / 2;
-    int w1 = PAD_X, w2 = PAD_X;
+    int w1 = g_pad_x, w2 = g_pad_x;
     for (int i = 0; i < half; i++)
         w1 += worst_case_width(dc, active_idx[i]);
     for (int i = half; i < a_cnt; i++)
         w2 += worst_case_width(dc, active_idx[i]);
-    return (w1 > w2 ? w1 : w2) + PAD_X;
+    return (w1 > w2 ? w1 : w2) + g_pad_x;
 }
 
 static int draw_single(HDC hdc, int x, int y, const wchar_t *text, COLORREF vc, int gap)
@@ -129,7 +171,7 @@ static int draw_pair(HDC hdc, int x, int y, const wchar_t *label, const wchar_t 
     SetTextColor(hdc, vc);
     TextOutW(hdc, x, y, value, (int)wcslen(value));
     GetTextExtentPoint32W(hdc, value, (int)wcslen(value), &sz);
-    return x + sz.cx + COL_GAP;
+    return x + sz.cx + g_col_gap;
 }
 
 static void draw_metric(HDC mem, int *x, int y, int id)
@@ -140,22 +182,22 @@ static void draw_metric(HDC mem, int *x, int y, int id)
     case M_NET_DL:
         fmt_speed(g_metrics.net_dl_speed, buf, 64);
         swprintf(final, 80, L"\u25BC %s", buf);
-        *x = draw_single(mem, *x, y, final, CLR_NORMAL, COL_GAP);
+        *x = draw_single(mem, *x, y, final, CLR_NORMAL, g_col_gap);
         break;
     case M_NET_UL:
         fmt_speed(g_metrics.net_ul_speed, buf, 64);
         swprintf(final, 80, L"\u25B2 %s", buf);
-        *x = draw_single(mem, *x, y, final, CLR_NORMAL, COL_GAP);
+        *x = draw_single(mem, *x, y, final, CLR_NORMAL, g_col_gap);
         break;
     case M_NET_ALL:
         fmt_speed(g_metrics.net_speed, buf, 64);
         swprintf(final, 80, L"\u2195 %s", buf);
-        *x = draw_single(mem, *x, y, final, CLR_NORMAL, COL_GAP);
+        *x = draw_single(mem, *x, y, final, CLR_NORMAL, g_col_gap);
         break;
     case M_NET_TOT:
         fmt_bytes(g_metrics.total_traffic, buf, 64);
         swprintf(final, 80, L"\u2211 %s", buf);
-        *x = draw_single(mem, *x, y, final, CLR_NORMAL, COL_GAP);
+        *x = draw_single(mem, *x, y, final, CLR_NORMAL, g_col_gap);
         break;
     case M_CPU_TEMP:
         if (g_metrics.cpu_temp >= 0)
@@ -218,15 +260,33 @@ void paint_widget(HWND hwnd)
     HDC hdc = BeginPaint(hwnd, &ps);
     RECT rc;
     GetClientRect(hwnd, &rc);
-    HDC mem = CreateCompatibleDC(hdc);
-    HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
-    HBITMAP old_bmp = (HBITMAP)SelectObject(mem, bmp);
+    if (rc.right <= 0 || rc.bottom <= 0)
+    {
+        EndPaint(hwnd, &ps);
+        return;
+    }
+
+    if (!s_mem_dc)
+        s_mem_dc = CreateCompatibleDC(hdc);
+
+    if (!s_mem_bmp || s_bmp_w < rc.right || s_bmp_h < rc.bottom)
+    {
+        if (s_old_bmp)
+            SelectObject(s_mem_dc, s_old_bmp);
+        if (s_mem_bmp)
+            DeleteObject(s_mem_bmp);
+
+        s_bmp_w = rc.right;
+        s_bmp_h = rc.bottom;
+        s_mem_bmp = CreateCompatibleBitmap(hdc, s_bmp_w, s_bmp_h);
+        s_old_bmp = (HBITMAP)SelectObject(s_mem_dc, s_mem_bmp);
+    }
 
     HBRUSH bg = CreateSolidBrush(BG_COLOR);
-    FillRect(mem, &rc, bg);
+    FillRect(s_mem_dc, &rc, bg);
     DeleteObject(bg);
-    SelectObject(mem, g_font);
-    SetBkMode(mem, TRANSPARENT);
+    SelectObject(s_mem_dc, g_font);
+    SetBkMode(s_mem_dc, TRANSPARENT);
 
     int active_idx[32];
     int a_cnt = 0;
@@ -237,32 +297,43 @@ void paint_widget(HWND hwnd)
     }
     int half = (a_cnt + 1) / 2;
 
-    int x = PAD_X, y = PAD_Y;
+    int x = g_pad_x, y = g_pad_y;
     for (int i = 0; i < half; i++)
-        draw_metric(mem, &x, y, active_idx[i]);
+        draw_metric(s_mem_dc, &x, y, active_idx[i]);
 
-    x = PAD_X;
-    y = PAD_Y + FONT_H + ROW_GAP;
+    x = g_pad_x;
+    y = g_pad_y + g_font_h + g_row_gap;
     for (int i = half; i < a_cnt; i++)
-        draw_metric(mem, &x, y, active_idx[i]);
+        draw_metric(s_mem_dc, &x, y, active_idx[i]);
 
-    BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, old_bmp);
-    DeleteObject(bmp);
-    DeleteDC(mem);
+    BitBlt(hdc, 0, 0, rc.right, rc.bottom, s_mem_dc, 0, 0, SRCCOPY);
     EndPaint(hwnd, &ps);
 }
 
 void init_gui(void)
 {
-    g_font = CreateFontW(-FONT_H, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                         CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    update_dpi_scale(NULL);
 }
+
 void cleanup_gui(void)
 {
+    if (s_mem_dc)
+    {
+        if (s_old_bmp)
+            SelectObject(s_mem_dc, s_old_bmp);
+        DeleteDC(s_mem_dc);
+        s_mem_dc = NULL;
+    }
+    if (s_mem_bmp)
+    {
+        DeleteObject(s_mem_bmp);
+        s_mem_bmp = NULL;
+    }
     if (g_font)
+    {
         DeleteObject(g_font);
+        g_font = NULL;
+    }
 }
 
 /* ================================================================

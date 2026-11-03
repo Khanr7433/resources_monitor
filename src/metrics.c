@@ -71,6 +71,8 @@ static struct
 
     void *wmi_svc;
     int wmi_ok;
+    int wmi_attempted;
+    int com_ok;
     HMODULE nvml_dll;
     void *nvml_dev;
     pfn_nvmlGetUtil nvml_util;
@@ -104,22 +106,52 @@ static void upd_freq(void)
 {
     if (!State.nt_power || State.ncpus <= 0)
         return;
-    int sz = State.ncpus * sizeof(CpuPowerInfo);
-    CpuPowerInfo *info = (CpuPowerInfo *)malloc(sz);
-    if (!info)
-        return;
-    memset(info, 0, sz);
-    if (State.nt_power(11, NULL, 0, info, sz) == 0)
+    static CpuPowerInfo s_info[256];
+    int n = State.ncpus > 256 ? 256 : State.ncpus;
+    int sz = n * sizeof(CpuPowerInfo);
+    memset(s_info, 0, sz);
+    if (State.nt_power(11, NULL, 0, s_info, sz) == 0)
     {
         double sum = 0;
-        for (int i = 0; i < State.ncpus; i++)
-            sum += info[i].CurrentMhz;
-        g_metrics.cpu_ghz = (sum / State.ncpus) / 1000.0;
+        for (int i = 0; i < n; i++)
+            sum += s_info[i].CurrentMhz;
+        g_metrics.cpu_ghz = (sum / n) / 1000.0;
     }
-    free(info);
 }
+
+static void init_wmi_lazy(void)
+{
+    if (State.wmi_attempted)
+        return;
+    State.wmi_attempted = 1;
+
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (SUCCEEDED(hr) || hr == (HRESULT)0x80010106L)
+    {
+        State.com_ok = 1;
+        CoInitializeSecurity(NULL, -1, NULL, NULL, 0, 3, NULL, 0, NULL);
+        void *loc = NULL;
+        if (SUCCEEDED(CoCreateInstance(&CLSID_WbemLocator, NULL, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, &loc)) && loc)
+        {
+            BSTR ns = SysAllocString(L"root\\LibreHardwareMonitor");
+            if (SUCCEEDED(WMI_Connect(loc, ns, &State.wmi_svc)) && State.wmi_svc)
+                State.wmi_ok = 1;
+            else
+            {
+                BSTR ns2 = SysAllocString(L"root\\OpenHardwareMonitor");
+                if (SUCCEEDED(WMI_Connect(loc, ns2, &State.wmi_svc)) && State.wmi_svc)
+                    State.wmi_ok = 1;
+                SysFreeString(ns2);
+            }
+            SysFreeString(ns);
+            COM_Release(loc);
+        }
+    }
+}
+
 static void upd_temp(void)
 {
+    init_wmi_lazy();
     if (!State.wmi_ok || !State.wmi_svc)
     {
         g_metrics.cpu_temp = -1;
@@ -282,21 +314,6 @@ void init_metrics(void)
     if (hp)
         State.nt_power = (pfn_NtPowerInfo)GetProcAddress(hp, "CallNtPowerInformation");
 
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    if (SUCCEEDED(hr) || hr == (HRESULT)0x80010106L)
-    {
-        CoInitializeSecurity(NULL, -1, NULL, NULL, 0, 3, NULL, 0, NULL);
-        void *loc = NULL;
-        if (SUCCEEDED(CoCreateInstance(&CLSID_WbemLocator, NULL, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, &loc)) && loc)
-        {
-            BSTR ns = SysAllocString(L"root\\LibreHardwareMonitor");
-            if (SUCCEEDED(WMI_Connect(loc, ns, &State.wmi_svc)) && State.wmi_svc)
-                State.wmi_ok = 1;
-            SysFreeString(ns);
-            COM_Release(loc);
-        }
-    }
-
     State.nvml_dll = LoadLibraryA("nvml.dll");
     if (State.nvml_dll)
     {
@@ -321,13 +338,21 @@ void init_metrics(void)
 void shutdown_metrics(void)
 {
     if (State.wmi_svc)
+    {
         COM_Release(State.wmi_svc);
+        State.wmi_svc = NULL;
+    }
     if (State.nvml_dll)
     {
         pfn_nvmlShutdown sd = (pfn_nvmlShutdown)GetProcAddress(State.nvml_dll, "nvmlShutdown");
         if (sd)
             sd();
         FreeLibrary(State.nvml_dll);
+        State.nvml_dll = NULL;
     }
-    CoUninitialize();
+    if (State.com_ok)
+    {
+        CoUninitialize();
+        State.com_ok = 0;
+    }
 }
