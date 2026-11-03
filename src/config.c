@@ -95,6 +95,12 @@ void load_config(void)
     wchar_t items[1024] = {0};
     GetPrivateProfileStringW(L"Settings", L"Items", DEFAULT_CFG, items, 1024, ini_path);
     parse_config_string(items);
+
+    if (cfg_count <= 0)
+    {
+        load_default_config();
+        save_config();
+    }
 }
 
 void load_default_config(void) { parse_config_string(DEFAULT_CFG); }

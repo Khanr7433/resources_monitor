@@ -358,7 +358,7 @@ static void LV_SET_CHK(HWND hwnd, int i, int chk)
 static void populate_list(HWND hList, int use_default)
 {
     SendMessageW(hList, LVM_DELETEALLITEMS, 0, 0);
-    if (use_default)
+    if (use_default || cfg_count <= 0)
         load_default_config();
     for (int i = 0; i < cfg_count; i++)
     {

@@ -79,8 +79,34 @@ static BOOL is_fullscreen_app_active(HWND self)
     return FALSE;
 }
 
+static void update_theme_colors(void)
+{
+    DWORD light_theme = 0;
+    DWORD sz = sizeof(light_theme);
+    HKEY hkey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                      0, KEY_READ, &hkey) == ERROR_SUCCESS)
+    {
+        RegQueryValueExW(hkey, L"SystemUsesLightTheme", NULL, NULL, (LPBYTE)&light_theme, &sz);
+        RegCloseKey(hkey);
+    }
+
+    if (light_theme)
+    {
+        g_clr_label = CLR_LIGHT_LABEL;
+        g_clr_value = CLR_LIGHT_VALUE;
+    }
+    else
+    {
+        g_clr_label = CLR_DARK_LABEL;
+        g_clr_value = CLR_DARK_VALUE;
+    }
+}
+
 static void resize_and_position(HWND hwnd)
 {
+    update_theme_colors();
     update_dpi_scale(hwnd);
     HDC dc = GetDC(hwnd);
     HFONT old = (HFONT)SelectObject(dc, g_font);
@@ -140,6 +166,12 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         InvalidateRect(h, NULL, TRUE);
         return 0;
     }
+    if (msg == WM_SETTINGCHANGE)
+    {
+        update_theme_colors();
+        InvalidateRect(h, NULL, TRUE);
+        return 0;
+    }
     if (msg == WM_TIMER && wp == TIMER_ID)
     {
         if (is_fullscreen_app_active(h))
@@ -167,10 +199,23 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     if (msg == WM_CONTEXTMENU || msg == WM_RBUTTONUP)
     {
+        if (cfg_count <= 0)
+            load_config();
+
         HMENU m = CreatePopupMenu();
         AppendMenuW(m, MF_STRING, 1, L"Task Manager");
-        AppendMenuW(m, MF_STRING, 2, L"Settings");
+
+        HMENU sub = CreatePopupMenu();
+        for (int i = 0; i < cfg_count; i++)
+        {
+            UINT flags = MF_STRING | (cfg_items[i].active ? MF_CHECKED : MF_UNCHECKED);
+            AppendMenuW(sub, flags, 100 + i, get_metric_friendly(cfg_items[i].id));
+        }
+        AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, L"Metrics");
+        AppendMenuW(m, MF_STRING, 2, L"Settings...");
+        AppendMenuW(m, MF_SEPARATOR, 0, NULL);
         AppendMenuW(m, MF_STRING, 3, L"Exit");
+
         POINT pt;
         GetCursorPos(&pt);
         SetForegroundWindow(h);
@@ -187,6 +232,15 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         else if (cmd == 3)
         {
             DestroyWindow(h);
+        }
+        else if (cmd >= 100 && cmd < 100 + cfg_count)
+        {
+            int idx = cmd - 100;
+            cfg_items[idx].active = !cfg_items[idx].active;
+            save_config();
+            resize_and_position(h);
+            InvalidateRect(h, NULL, TRUE);
+            SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
         }
         DestroyMenu(m);
         return 0;
@@ -217,7 +271,7 @@ static HWND create_widget(HINSTANCE inst)
         printf("CreateWindowExW failed, error: %lu\n", GetLastError());
         return NULL;
     }
-    SetLayeredWindowAttributes(hwnd, 0, 230, LWA_ALPHA);
+    SetLayeredWindowAttributes(hwnd, KEY_COLOR, 0, LWA_COLORKEY);
 
     load_config();
     resize_and_position(hwnd);
